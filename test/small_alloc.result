@@ -2,3 +2,5 @@
 	*** small_alloc_basic: done ***
 	*** small_alloc_large ***
 	*** small_alloc_large: done ***
+	*** small_quota_release ***
+	*** small_quota_release: done ***

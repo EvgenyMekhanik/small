@@ -129,6 +129,38 @@ small_alloc_large(void)
 	footer();
 }
 
+static void
+small_quota_release(void)
+{
+	header();
+
+	size_t total, used;
+	size_t alloc_size = 1000;
+	quota_get_total_and_used(&quota, &total, &used);
+	size_t amount = (total - used) / alloc_size;
+
+	int **a = calloc(amount, sizeof(int *));
+	int i = 0;
+	while (quota_use(&quota, 1) >= 0) {
+		quota_disable(&quota);
+		a[i++] = smalloc(&alloc, alloc_size);
+		quota_enable(&quota);
+	}
+
+	quota_get_total_and_used(&quota, &total, &used);
+	fail_unless(total < used);
+
+	quota_disable(&quota);
+	for (int j = 0; j < i; j++)
+		smfree(&alloc, a[j], alloc_size);
+	quota_enable(&quota);
+	free(a);
+
+	quota_get_total_and_used(&quota, &total, &used);
+	fail_unless(total > used);
+	footer();
+}
+
 int main()
 {
 	seed = time(0);
@@ -143,6 +175,7 @@ int main()
 
 	small_alloc_basic();
 	small_alloc_large();
+	small_quota_release();
 
 	slab_cache_destroy(&cache);
 }

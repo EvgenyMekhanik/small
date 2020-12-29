@@ -163,7 +163,7 @@ smalloc(struct small_alloc *alloc, size_t size)
 	small_collect_garbage(alloc);
 
 	struct factor_pool *upper_bound = factor_pool_search(alloc, size);
-	if (upper_bound == NULL) {
+	if (upper_bound == NULL || !slab_cache_is_quota_enabled(alloc->cache)) {
 		/* Object is too large, fallback to slab_cache */
 		struct slab *slab = slab_get_large(alloc->cache, size);
 		if (slab == NULL)
@@ -179,7 +179,7 @@ static inline struct mempool *
 mempool_find(struct small_alloc *alloc, size_t size)
 {
 	struct factor_pool *upper_bound = factor_pool_search(alloc, size);
-	if (upper_bound == NULL)
+	if (upper_bound == NULL || !slab_cache_is_quota_enabled(alloc->cache))
 		return NULL; /* Allocated by slab_cache. */
 	assert(size >= upper_bound->objsize_min);
 	struct mempool *pool = &upper_bound->pool;

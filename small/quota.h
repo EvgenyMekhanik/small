@@ -57,6 +57,12 @@ struct quota {
 	 * QUOTA_UNIT_SIZE.
 	 */
 	uint64_t value;
+	/**
+	 * By default the quota is enabled. If it is set to
+	 * false, quota_use will allow to overuse the total
+	 * available memory limit.
+	 */
+	bool is_enabled;
 };
 
 /**
@@ -68,6 +74,7 @@ quota_init(struct quota *quota, size_t total)
 	uint64_t new_total = (total + (QUOTA_UNIT_SIZE - 1)) /
 				QUOTA_UNIT_SIZE;
 	quota->value = new_total << 32;
+	quota->is_enabled = true;
 }
 
 /**
@@ -122,6 +129,18 @@ quota_set(struct quota *quota, size_t new_total)
 	return new_total_in_units * QUOTA_UNIT_SIZE;
 }
 
+static inline void
+quota_enable(struct quota *quota)
+{
+	quota->is_enabled = true;
+}
+
+static inline void
+quota_disable(struct quota *quota)
+{
+	quota->is_enabled = false;
+}
+
 /**
  * Use up a quota
  * @retval > 0 aligned value on success
@@ -143,7 +162,7 @@ quota_use(struct quota *quota, size_t size)
 		uint32_t new_used_in_units = used_in_units + size_in_units;
 		assert(new_used_in_units > used_in_units);
 
-		if (new_used_in_units > total_in_units)
+		if (new_used_in_units > total_in_units && quota->is_enabled)
 			return -1;
 
 		uint64_t new_value =

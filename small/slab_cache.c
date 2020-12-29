@@ -462,3 +462,9 @@ slab_cache_check(struct slab_cache *cache)
 		return;
 	abort();
 }
+
+bool
+slab_cache_is_quota_enabled(const struct slab_cache *cache)
+{
+	return cache->arena->quota->is_enabled;
+}

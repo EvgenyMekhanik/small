@@ -271,6 +271,9 @@ slab_from_data(void *data)
 void
 slab_cache_check(struct slab_cache *cache);
 
+bool
+slab_cache_is_quota_enabled(const struct slab_cache *cache);
+
 /**
  * Find the nearest power of 2 size capable of containing
  * a chunk of the given size. Adjust for cache->order0_size
