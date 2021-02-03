@@ -74,6 +74,11 @@ struct slab {
 	 * slab->in_use is set to slab->order + 1.
 	 */
 	uint8_t in_use;
+	/*
+	 * Pointer to mempool containing slab
+	 */
+	struct mempool *mempool;
+
 };
 
 /** Allocation statistics. */

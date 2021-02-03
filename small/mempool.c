@@ -132,11 +132,11 @@ mslab_free(struct mempool *pool, struct mslab *slab, void *ptr)
 			slab_put_with_order(pool->cache, &pool->spare->slab);
 			pool->spare = slab;
 		 } else if (pool->spare) {
-			 slab_list_del(&pool->slabs, &slab->slab,
+			slab_list_del(&pool->slabs, &slab->slab,
 				       next_in_list);
-			 slab_put_with_order(pool->cache, &slab->slab);
+			slab_put_with_order(pool->cache, &slab->slab);
 		 } else {
-			 pool->spare = slab;
+			pool->spare = slab;
 		 }
 	}
 }
@@ -163,6 +163,8 @@ mempool_create_with_order(struct mempool *pool, struct slab_cache *cache,
 	assert(pool->objcount);
 	pool->offset = slab_size - pool->objcount * pool->objsize;
 	pool->slab_ptr_mask = ~(slab_order_size(cache, order) - 1);
+	pool->larger_pool_waste_cur = 0;
+	pool->larger_pool_waste_max = slab_size / 4;
 }
 
 void
@@ -197,6 +199,7 @@ mempool_alloc(struct mempool *pool)
 		assert(slab->in_hot_slabs == false);
 		mslab_tree_insert(&pool->hot_slabs, slab);
 		slab->in_hot_slabs = true;
+		slab->slab.mempool = pool;
 		pool->first_hot_slab = slab;
 	}
 	pool->slabs.stats.used += pool->objsize;

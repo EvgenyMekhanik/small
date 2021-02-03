@@ -114,6 +114,20 @@ struct factor_pool
 	 * pool.
 	 */
 	size_t objsize_min;
+	/**
+	 * Pool mask each bit of which determines
+	 * the index of the pool in which at least one
+	 * slab is allocated.
+	 */
+	uint32_t used_pool_mask;
+	/**
+	 * Index of this factor pool.
+	 */
+	uint32_t idx;
+	/**
+	 * Currently used pool for memory allocation.
+	 */
+	struct factor_pool *used_pool;
 };
 
 /**

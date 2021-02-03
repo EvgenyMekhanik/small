@@ -175,6 +175,16 @@ struct mempool
 	uint32_t offset;
 	/** Address mask to translate ptr to slab */
 	intptr_t slab_ptr_mask;
+	/**
+	 * Currently memory waste for a given mempool
+	 * when allocating memory from large pools.
+	 */
+	size_t larger_pool_waste_cur;
+	/**
+	 * Maximum memory waste allowed for a given mempool
+	 * when allocating memory from large pools.
+	 */
+	size_t larger_pool_waste_max;
 };
 
 /** Allocation statistics. */
@@ -276,6 +286,28 @@ mempool_free(struct mempool *pool, void *ptr)
 	assert(slab->slab.order == pool->slab_order);
 	pool->slabs.stats.used -= pool->objsize;
 	mslab_free(pool, slab, ptr);
+}
+
+/**
+ * Free a single object.
+ * @pre the object is allocated in this pool.
+ */
+static inline void
+mempool_free_not_appropriate(struct mempool *expected_pool, void *ptr)
+{
+	assert(ptr);
+	struct mslab *slab = (struct mslab *)
+		slab_from_ptr(ptr, expected_pool->slab_ptr_mask);
+	struct mempool *real_pool = slab->slab.mempool;
+#ifndef NDEBUG
+	memset(ptr, '#', real_pool->objsize);
+#endif
+	assert(slab->slab.order == real_pool->slab_order);
+	real_pool->slabs.stats.used -= real_pool->objsize;
+	assert(real_pool->objsize >= expected_pool->objsize);
+	expected_pool->larger_pool_waste_cur -=
+		(real_pool->objsize - expected_pool->objsize);
+	mslab_free(real_pool, slab, ptr);
 }
 
 

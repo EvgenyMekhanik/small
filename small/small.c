@@ -32,23 +32,90 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include <strings.h> /* ffs */
+
+#ifndef __has_builtin
+#  define __has_builtin(x) 0
+#endif
+#if __has_builtin(__builtin_expect) || defined(__GNUC__)
+#  define likely(x)    __builtin_expect(!! (x),1)
+#  define unlikely(x)  __builtin_expect(!! (x),0)
+#else
+#  define likely(x)    (x)
+#  define unlikely(x)  (x)
+#endif
+
+static inline void
+factor_pool_update_used_pool(struct factor_pool *factor_pool)
+{
+	factor_pool->used_pool = factor_pool;
+	factor_pool->used_pool_mask |= (UINT32_C(1) << factor_pool->idx);
+	struct factor_pool *first = factor_pool - factor_pool->idx;
+	assert(first->pool.slab_order == factor_pool->pool.slab_order);
+	for (struct factor_pool *pool = first; pool != factor_pool; pool++) {
+		if (pool != pool->used_pool) {
+			pool->used_pool_mask |=
+				(UINT32_C(1) << factor_pool->idx);
+			int used_idx =
+				__builtin_ffs(pool->used_pool_mask) -
+				1 - pool->idx;
+			assert(pool->used_pool == NULL ||
+			       (pool + used_idx <= pool->used_pool));
+			pool->used_pool = pool + used_idx;
+		}
+	}
+}
+
+static inline struct factor_pool *
+factor_pool_search_appropriate(struct small_alloc *alloc, size_t size)
+{
+	if (unlikely(size > alloc->objsize_max))
+		return NULL;
+	unsigned cls = small_class_calc_offset_by_size(&alloc->small_class,
+						       size);
+	struct factor_pool *pool = &alloc->factor_pool_cache[cls];
+	return pool;
+}
 
 static inline struct factor_pool *
 factor_pool_search(struct small_alloc *alloc, size_t size)
 {
-	if (size > alloc->objsize_max)
+	if (unlikely(size > alloc->objsize_max))
 		return NULL;
-	unsigned cls = small_class_calc_offset_by_size(&alloc->small_class, size);
+	unsigned cls = small_class_calc_offset_by_size(&alloc->small_class,
+						       size);
 	struct factor_pool *pool = &alloc->factor_pool_cache[cls];
-	return pool;
+	if (likely(pool->used_pool == pool))
+		return pool;
+
+	pool->pool.larger_pool_waste_cur +=
+		pool->used_pool->pool.objsize - pool->pool.objsize;
+	if (unlikely(pool->pool.larger_pool_waste_cur >=
+		     pool->pool.larger_pool_waste_max))
+		factor_pool_update_used_pool(pool);
+
+	return pool->used_pool;
+}
+
+static inline struct factor_pool*
+caclulate_last_pool_for_mask(struct factor_pool *cur, struct factor_pool *last)
+{
+	uint32_t c = 0;
+	while (cur < last && (c++) < 8 * sizeof(cur->used_pool_mask) - 1)
+		cur++;
+	return cur;
 }
 
 static inline void
 factor_pool_create(struct small_alloc *alloc)
 {
+	uint32_t slab_order_cur = 0, slab_order_next = 0;
 	size_t objsize = 0;
+	struct factor_pool *cur_order_pool = &alloc->factor_pool_cache[0];
+
 	for (alloc->factor_pool_cache_size = 0;
-	     objsize < alloc->objsize_max && alloc->factor_pool_cache_size < FACTOR_POOL_MAX;
+	     objsize < alloc->objsize_max &&
+	     alloc->factor_pool_cache_size < FACTOR_POOL_MAX;
 	     alloc->factor_pool_cache_size++) {
 		size_t prevsize = objsize;
 		objsize = small_class_calc_size_by_offset(&alloc->small_class,
@@ -59,6 +126,34 @@ factor_pool_create(struct small_alloc *alloc)
 			&alloc->factor_pool_cache[alloc->factor_pool_cache_size];
 		mempool_create(&pool->pool, alloc->cache, objsize);
 		pool->objsize_min = prevsize + 1;
+		pool->used_pool_mask = 0;
+		pool->idx = 0;
+		pool->used_pool = 0;
+
+		slab_order_cur = (slab_order_cur == 0 ?
+				  pool->pool.slab_order : slab_order_cur);
+		slab_order_next = pool->pool.slab_order;
+		if (slab_order_next != slab_order_cur ||
+		    objsize >= alloc->objsize_max ||
+		    alloc->factor_pool_cache_size >= FACTOR_POOL_MAX) {
+			slab_order_cur = slab_order_next;
+			struct factor_pool *last_pool =
+				((objsize >= alloc->objsize_max ||
+				 alloc->factor_pool_cache_size >=
+				 FACTOR_POOL_MAX) ? pool : pool - 1);
+			while (cur_order_pool <= last_pool) {
+				unsigned idx = 0;
+				struct factor_pool *last =
+					caclulate_last_pool_for_mask(cur_order_pool,
+								     last_pool);
+				while (cur_order_pool <= last) {
+					cur_order_pool->idx = idx++;
+					cur_order_pool++;
+				}
+				factor_pool_update_used_pool(last);
+				last->pool.larger_pool_waste_max = ~0;
+			}
+		}
 	}
 	alloc->objsize_max = objsize;
 }
@@ -134,7 +229,8 @@ small_collect_garbage(struct small_alloc *alloc)
 					break;
 				continue;
 			}
-			mempool_free(pool, item);
+
+			mempool_free_not_appropriate(pool, item);
 		}
 	} else {
 		/* Finish garbage collection and switch to regular mode */
@@ -162,15 +258,15 @@ smalloc(struct small_alloc *alloc, size_t size)
 {
 	small_collect_garbage(alloc);
 
-	struct factor_pool *upper_bound = factor_pool_search(alloc, size);
-	if (upper_bound == NULL) {
+	struct factor_pool *factor_pool = factor_pool_search(alloc, size);
+	if (unlikely(factor_pool == NULL)) {
 		/* Object is too large, fallback to slab_cache */
 		struct slab *slab = slab_get_large(alloc->cache, size);
-		if (slab == NULL)
+		if (unlikely(slab == NULL))
 			return NULL;
 		return slab_data(slab);
 	}
-	struct mempool *pool = &upper_bound->pool;
+	struct mempool *pool = &factor_pool->pool;
 	assert(size <= pool->objsize);
 	return mempool_alloc(pool);
 }
@@ -178,11 +274,12 @@ smalloc(struct small_alloc *alloc, size_t size)
 static inline struct mempool *
 mempool_find(struct small_alloc *alloc, size_t size)
 {
-	struct factor_pool *upper_bound = factor_pool_search(alloc, size);
-	if (upper_bound == NULL)
+	struct factor_pool *factor_pool =
+		factor_pool_search_appropriate(alloc, size);
+	if (unlikely(factor_pool == NULL))
 		return NULL; /* Allocated by slab_cache. */
-	assert(size >= upper_bound->objsize_min);
-	struct mempool *pool = &upper_bound->pool;
+	assert(size >= factor_pool->objsize_min);
+	struct mempool *pool = &factor_pool->pool;
 	assert(size <= pool->objsize);
 	return pool;
 }
@@ -192,7 +289,7 @@ mempool_find(struct small_alloc *alloc, size_t size)
  * Free a small object.
  *
  * This boils down to finding the object's mempool and delegating
- * to mempool_free().
+ * to mempool_free_not_appropriate().
  *
  * If the pool becomes completely empty, and it's a factored pool,
  * and the factored pool's cache is empty, put back the empty
@@ -202,7 +299,7 @@ void
 smfree(struct small_alloc *alloc, void *ptr, size_t size)
 {
 	struct mempool *pool = mempool_find(alloc, size);
-	if (pool == NULL) {
+	if (unlikely(pool == NULL)) {
 		/* Large allocation by slab_cache */
 		struct slab *slab = slab_from_data(ptr);
 		slab_put_large(alloc->cache, slab);
@@ -210,7 +307,7 @@ smfree(struct small_alloc *alloc, void *ptr, size_t size)
 	}
 
 	/* Regular allocation in mempools */
-	mempool_free(pool, ptr);
+	mempool_free_not_appropriate(pool, ptr);
 }
 
 /**
@@ -223,7 +320,7 @@ smfree_delayed(struct small_alloc *alloc, void *ptr, size_t size)
 {
 	if (alloc->free_mode == SMALL_DELAYED_FREE && ptr) {
 		struct mempool *pool = mempool_find(alloc, size);
-		if (pool == NULL) {
+		if (unlikely(pool == NULL)) {
 			/* Large-object allocation by slab_cache. */
 			lifo_push(&alloc->delayed_large, ptr);
 			return;
