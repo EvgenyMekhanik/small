@@ -145,11 +145,11 @@ mslab_free(struct mempool *pool, struct mslab *slab, void *ptr)
 			slab_put_with_order(pool->cache, &pool->spare->slab);
 			pool->spare = slab;
 		 } else if (pool->spare) {
-			 slab_list_del(&pool->slabs, &slab->slab,
+			slab_list_del(&pool->slabs, &slab->slab,
 				       next_in_list);
-			 slab_put_with_order(pool->cache, &slab->slab);
+			slab_put_with_order(pool->cache, &slab->slab);
 		 } else {
-			 pool->spare = slab;
+			pool->spare = slab;
 		 }
 	}
 }
