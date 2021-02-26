@@ -81,6 +81,34 @@ struct small_mempool
 	 * pool.
 	 */
 	size_t objsize_min;
+	/**
+	 * Mask for this pool, which shows all pools in the group with an
+	 * object size greater than or equal to the object size of this pool,
+	 * from which there was at least one allocation.
+	 */
+	uint32_t used_pool_mask;
+	/**
+	 * Index of this factor pool in factor pool group with same slab
+	 * size and the number of pools is no more than 32.
+	 */
+	uint32_t idx;
+	/**
+	 * Currently used pool for memory allocation.
+	 */
+	struct small_mempool *used_pool;
+	/**
+	 * Currently memory waste for a given mempool.
+	 * We only take into account memory losses for allocations
+	 * from mempools with larger object size.
+	 */
+	size_t waste;
+	/**
+	 * Maximum memory waste for a given memool caused by memory
+	 * allocation from mempools with large object sizes.
+	 * If waste >= waste_max we start to allocate memory
+	 * from a given mempool.
+	 */
+	size_t waste_max;
 };
 
 /**
