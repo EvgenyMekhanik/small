@@ -114,6 +114,35 @@ struct factor_pool
 	 * pool.
 	 */
 	size_t objsize_min;
+	/**
+	 * The pool mask for a group of pools with the same slab size
+	 * and the number of pools is no more than 32. Each set bit of
+	 * the mask corresponds to the index of the pool in which at least
+	 * one slab is allocated.
+	 */
+	uint32_t used_pool_mask;
+	/**
+	 * Index of this factor pool in factor pool group with same slab
+	 * size and the number of pools is no more than 32.
+	 */
+	uint32_t idx;
+	/**
+	 * Currently used pool for memory allocation.
+	 */
+	struct factor_pool *used_pool;
+	/**
+	 * Currently memory waste for a given mempool.
+	 * We only take into account memory losses for allocations
+	 * from mempools with larger object size.
+	 */
+	size_t waste;
+	/**
+	 * Maximum memory waste for a given memool caused by memory
+	 * allocation from mempools with large object sizes.
+	 * If waste >= waste_max we start to allocate memory
+	 * from a given mempool.
+	 */
+	size_t waste_max;
 };
 
 /**
