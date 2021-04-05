@@ -109,6 +109,10 @@ struct small_mempool
 	 * from a given mempool.
 	 */
 	size_t waste_max;
+	/**
+	 * Flag, indicates, that this pool is last in group.
+	 */
+	bool last_in_group;
 };
 
 /**

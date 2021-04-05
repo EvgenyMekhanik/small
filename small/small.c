@@ -45,17 +45,26 @@ enum {
  * group becames greater or equal then waste_max, we mark this
  * mempool as available for allocation for all mempools in group,
  * with object size less than or equal this pool object size,
- * using this function.
- * @param[in] small_mempool - pool, whose waste has become greater or equal
- *                            then waste_max. Now for all objects whose size
- *                            are in the range from small_mempool->objsize_min
- *                            to small_mempool->pool.objsize the memory will be
- *                            allocated from this pool. Also all pools in group
- *                            with smaller object size and waste less then
- *                            waste_max will allocate memory from this pool.
+ * using this function. Also in case when memory for some mempool,
+ * which is not greatest in group, released and waste for this pool
+ * is equal to zero, we mark this pool as not available for allocation.
+ * @param[in] small_mempool - 1. if available flag is true, this is pool whose
+ *                            waste has become greater or equal equal then
+ *                            waste_max. Now for all objects whose size are
+ *                            in the range from small_mempool->objsize_min to
+ *                            small_mempool->pool.objsize the memory will be
+ *                            allocated from this small_mempool. Also all pools
+ *                            in group with smaller object size and waste less
+ *                            then waste_max will allocate memory from this
+ *                            pool.
+ *                            2. if available flag is false, this is pool, which
+ *                            memory is totally released and waste == 0. We mark
+ *                            this pool as not available for allocation.
+ * @param[in] available - flag, indicates is this pool available/not available
+ *                        for allocation
  */
 static inline void
-small_mempool_update_group(struct small_mempool *small_mempool)
+small_mempool_update_group(struct small_mempool *small_mempool, bool available)
 {
 	/*
 	 * Calculate first pool in group
@@ -73,10 +82,15 @@ small_mempool_update_group(struct small_mempool *small_mempool)
 	for (struct small_mempool *pool = first; pool <= small_mempool; pool++) {
 			/*
 			 * First we update used_pool_mask marking the new pool
-			 * as available for allocation
+			 * as available/not available for allocation
 			 */
-			pool->used_pool_mask |=
-				(UINT32_C(1) << small_mempool->idx);
+			if (available) {
+				pool->used_pool_mask |=
+					(UINT32_C(1) << small_mempool->idx);
+			} else {
+				pool->used_pool_mask &=
+					~((UINT32_C(1) << small_mempool->idx));
+			}
 			/*
 			 * Recalculate pool index for allocation.
 			 * We select the pool with the lowest index,
@@ -86,6 +100,35 @@ small_mempool_update_group(struct small_mempool *small_mempool)
 				__builtin_ffs(pool->used_pool_mask) -
 				1 - pool->idx;
 			pool->used_pool = pool + used_idx;
+	}
+}
+
+/**
+ * Checks that this pool memory is totaly released, this
+ * pool is lat in group and waste for this pool == 0
+ * (There are no objects that was allocated in a larger pool,
+ * but in fact this pool is optimal for them). If all this
+ * conditions are true, marks this pool as not available for
+ * allocations and frees it's spare slab.
+ * @param[in] small_mempool - small mempool.
+ */
+static inline void
+small_mempool_check_and_free_spare(struct small_mempool *small_mempool)
+{
+	/*
+	 * In case when pool memory is totally released,
+	 * this pool is not last in group and there are no
+	 * memory waste for this pool (because of allocation
+	 * from pools with greater objects size), we mark
+	 * this pool as not available for allocation and
+	 * released it's mempool spare slab.
+	 */
+	if (small_mempool->pool.spare != NULL &&
+	    mempool_count(&small_mempool->pool) == 0 &&
+	    ! small_mempool->last_in_group &&
+	    small_mempool->waste == 0) {
+		mempool_free_spare_slab(&small_mempool->pool);
+		small_mempool_update_group(small_mempool, false);
 	}
 }
 
@@ -123,10 +166,12 @@ small_mempool_create_group(struct small_mempool *first,
 	unsigned idx = 0;
 	while (first <= last) {
 		first->idx = idx++;
+		first->last_in_group = false;
 		assert(first->idx < POOL_PER_GROUP_MAX);
 		first++;
 	}
-	small_mempool_update_group(last);
+	last->last_in_group = true;
+	small_mempool_update_group(last, true);
 }
 
 /**
@@ -293,15 +338,17 @@ small_collect_garbage(struct small_alloc *alloc)
 			 */
 			struct mslab *slab = (struct mslab *)
 				slab_from_ptr(item, pool->slab_ptr_mask);
-			if (pool->small_mempool !=
-			    slab->mempool->small_mempool) {
-				assert(slab->mempool ==
-				       &slab->mempool->small_mempool->pool);
+			struct mempool *slab_mempool = slab->mempool;
+			if (pool->small_mempool != slab_mempool->small_mempool) {
+				assert(slab_mempool ==
+				       &slab_mempool->small_mempool->pool);
 				pool->small_mempool->waste -=
-					(slab->mempool->objsize -
+					(slab_mempool->objsize -
 					 pool->objsize);
+				small_mempool_check_and_free_spare(pool->small_mempool);
 			}
-			mempool_free_slab(slab->mempool, slab, item);
+			mempool_free_slab(slab_mempool, slab, item);
+			small_mempool_check_and_free_spare(slab_mempool->small_mempool);
 		}
 	} else {
 		/* Finish garbage collection and switch to regular mode */
@@ -348,7 +395,7 @@ smalloc(struct small_alloc *alloc, size_t size)
 		 * that it can now be used for memory allocation.
 		 */
 		if (small_mempool->waste >= small_mempool->waste_max)
-			small_mempool_update_group(small_mempool);
+			small_mempool_update_group(small_mempool, true);
 	}
 
 	assert(size <= pool->objsize);
@@ -387,18 +434,21 @@ smfree(struct small_alloc *alloc, void *ptr, size_t size)
 
 	struct mslab *slab = (struct mslab *)
 		slab_from_ptr(ptr, pool->pool.slab_ptr_mask);
+	struct mempool *slab_mempool = slab->mempool;
 	/*
 	 * In case this ptr was allocated from other small mempool
 	 * reducing waste for current pool (as you remember, waste
 	 * in our case is memory loss due to allocation from large pools).
 	 */
-	if (pool != slab->mempool->small_mempool) {
-		assert(slab->mempool == &slab->mempool->small_mempool->pool);
-		pool->waste -= (slab->mempool->objsize - pool->pool.objsize);
+	if (pool != slab_mempool->small_mempool) {
+		assert(slab_mempool == &slab_mempool->small_mempool->pool);
+		pool->waste -= (slab_mempool->objsize - pool->pool.objsize);
+		small_mempool_check_and_free_spare(pool);
 	}
 
 	/* Regular allocation in mempools */
-	mempool_free_slab(slab->mempool, slab, ptr);
+	mempool_free_slab(slab_mempool, slab, ptr);
+	small_mempool_check_and_free_spare(slab_mempool->small_mempool);
 }
 
 /**
