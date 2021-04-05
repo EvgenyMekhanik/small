@@ -45,17 +45,25 @@ enum {
  * group becames greater or equal then waste_max, we mark this
  * mempool as available for allocation for all mempools in group,
  * with object size less than or equal this pool object size,
- * using this function.
- * @param[in] factor_pool - factor pool, whose waste has become greater or
+ * using this function. Also in case when memory for some mempool,
+ * which is not greatest in group, released and waste for this pool
+ * is equal to zero, we mark this pool as not available for allocation.
+ * @param[in] factor_pool - 1. if available flag is true, this is
+ *                          factor_pool whose waste has become greater or
  *                          equal then waste_max. Now for all objects whose
  *                          size are in the range from factor_pool->objsize_min
  *                          to factor_pool->pool.objsize the memory will be
  *                          allocated from this factor_pool. Also all pools in
  *                          group with smaller object size and waste less then
  *                          waste_max will allocate memory from this pool.
+ *                          2. if available flag is false, this is factor_pool,
+ *                          which memory is totally released and waste == 0.
+ *                          We mark this pool as not available for allocation.
+ * @param[in] available - flag, indicates is this pool available/not available
+ *                        for allocation
  */
 static inline void
-factor_pool_update_group(struct factor_pool *factor_pool)
+factor_pool_update_group(struct factor_pool *factor_pool, bool available)
 {
 	/*
 	 * Calculate first pool in group
@@ -73,10 +81,15 @@ factor_pool_update_group(struct factor_pool *factor_pool)
 	for (struct factor_pool *pool = first; pool <= factor_pool; pool++) {
 			/*
 			 * First we update used_pool_mask marking the new pool
-			 * as available for allocation
+			 * as available/not available for allocation
 			 */
-			pool->used_pool_mask |=
-				(UINT32_C(1) << factor_pool->idx);
+			if (available) {
+				pool->used_pool_mask |=
+					(UINT32_C(1) << factor_pool->idx);
+			} else {
+				pool->used_pool_mask &=
+					~((UINT32_C(1) << factor_pool->idx));
+			}
 			/*
 			 * Recalculate pool index for allocation.
 			 * We select the pool with the lowest index,
@@ -86,6 +99,35 @@ factor_pool_update_group(struct factor_pool *factor_pool)
 				__builtin_ffs(pool->used_pool_mask) -
 				1 - pool->idx;
 			pool->used_pool = pool + used_idx;
+	}
+}
+
+/**
+ * Checks that this pool memory is totaly released, this
+ * pool is lat in group and waste for this pool == 0
+ * (There are no objects that was allocated in a larger pool,
+ * but in fact this pool is optimal for them). If all this
+ * conditions are true, marks this pool as not available for
+ * allocations and frees it's spare slab.
+ * @param[in] factor_pool - factor pool.
+ */
+static inline void
+factor_pool_check_and_free_spare(struct factor_pool *factor_pool)
+{
+	/*
+	 * In case when pool memory is totally released,
+	 * this pool is not last in group and there are no
+	 * memory waste for this pool (because of allocation
+	 * from pools with greater objects size), we mark
+	 * this pool as not available for allocation and
+	 * released it's mempool spare slab.
+	 */
+	if (factor_pool->pool.spare != NULL &&
+	    mempool_count(&factor_pool->pool) == 0 &&
+	    ! factor_pool->last_in_group &&
+	    factor_pool->waste == 0) {
+		mempool_free_spare_slab(&factor_pool->pool);
+		factor_pool_update_group(factor_pool, false);
 	}
 }
 
@@ -122,10 +164,12 @@ factor_pool_create_group(struct factor_pool *first, struct factor_pool *last)
 	unsigned idx = 0;
 	while (first <= last) {
 		first->idx = idx++;
+		first->last_in_group = false;
 		assert(first->idx < POOL_PER_GROUP_MAX);
 		first++;
 	}
-	factor_pool_update_group(last);
+	last->last_in_group = true;
+	factor_pool_update_group(last, true);
 }
 
 /**
@@ -285,14 +329,17 @@ small_collect_garbage(struct small_alloc *alloc)
 			 */
 			struct mslab *slab = (struct mslab *)
 				slab_from_ptr(item, pool->slab_ptr_mask);
-			if (pool->factor_pool != slab->mempool->factor_pool) {
-				assert(slab->mempool ==
-				       &slab->mempool->factor_pool->pool);
+			struct mempool *slab_mempool = slab->mempool;
+			if (pool->factor_pool != slab_mempool->factor_pool) {
+				assert(slab_mempool ==
+				       &slab_mempool->factor_pool->pool);
 				pool->factor_pool->waste -=
-					(slab->mempool->objsize -
+					(slab_mempool->objsize -
 					 pool->objsize);
+				factor_pool_check_and_free_spare(pool->factor_pool);
 			}
-			mempool_free_slab(slab->mempool, slab, item);
+			mempool_free_slab(slab_mempool, slab, item);
+			factor_pool_check_and_free_spare(slab_mempool->factor_pool);
 		}
 	} else {
 		/* Finish garbage collection and switch to regular mode */
@@ -344,7 +391,7 @@ smalloc(struct small_alloc *alloc, size_t size)
 		 * that it can now be used for memory allocation.
 		 */
 		if (upper_bound->waste >= upper_bound->waste_max)
-			factor_pool_update_group(upper_bound);
+			factor_pool_update_group(upper_bound, true);
 	}
 
 	assert(size <= pool->objsize);
@@ -387,18 +434,21 @@ smfree(struct small_alloc *alloc, void *ptr, size_t size)
 
 	struct mslab *slab = (struct mslab *)
 		slab_from_ptr(ptr, pool->pool.slab_ptr_mask);
+	struct mempool *slab_mempool = slab->mempool;
 	/*
 	 * In case this ptr was allocated from other factor pool
 	 * reducing waste for current pool (as you remember, waste
 	 * in our case is memory loss due to allocation from large pools).
 	 */
-	if (pool != slab->mempool->factor_pool) {
-		assert(slab->mempool == &slab->mempool->factor_pool->pool);
-		pool->waste -= (slab->mempool->objsize - pool->pool.objsize);
+	if (pool != slab_mempool->factor_pool) {
+		assert(slab_mempool == &slab_mempool->factor_pool->pool);
+		pool->waste -= (slab_mempool->objsize - pool->pool.objsize);
+		factor_pool_check_and_free_spare(pool);
 	}
 
 	/* Regular allocation in mempools */
-	mempool_free_slab(slab->mempool, slab, ptr);
+	mempool_free_slab(slab_mempool, slab, ptr);
+	factor_pool_check_and_free_spare(slab_mempool->factor_pool);
 }
 
 /**
