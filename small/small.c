@@ -38,6 +38,32 @@ enum {
 };
 
 /**
+ * Checks that this pool memory is totaly released, this
+ * pool is lat in group and waste for this pool == 0
+ * (There are no objects that was allocated in a larger pool,
+ * but in fact this pool is optimal for them). If all this
+ * conditions are true, marks this pool as not available for
+ * allocations and frees it's spare slab.
+ * @param[in] small_mempool - small mempool.
+ */
+static inline void
+small_mempool_check_and_free_spare(struct small_mempool *small_mempool)
+{
+	/*
+	 * In case when pool memory is totally released,
+	 * this pool is not last in group and there are no
+	 * memory waste for this pool (because of allocation
+	 * from pools with greater objects size), we mark
+	 * this pool as not available for allocation and
+	 * released it's mempool spare slab.
+	 */
+	if (small_mempool->pool.spare != NULL &&
+	    mempool_count(&small_mempool->pool) == 0 &&
+	    small_mempool != small_mempool->group->last_in_group)
+		mempool_free_spare_slab(&small_mempool->pool);
+}
+
+/**
  * Calculates last pool in group.
  * In a group of pools with the same pool size,
  * there can be no more than 32 pools
@@ -278,12 +304,19 @@ smalloc(struct small_alloc *alloc, size_t size)
 			return NULL;
 		return slab_data(slab);
 	}
+
 	if (small_mempool->group->non_optimal_alloc <
 	    small_mempool->group->non_optimal_alloc_max) {
 		++small_mempool->group->non_optimal_alloc;
 		small_mempool = small_mempool->group->last_in_group;
 	}
 
+	void *ptr = mempool_alloc(&small_mempool->pool);
+	if (ptr != NULL)
+		return ptr;
+
+	for (unsigned i = 0; i < alloc->small_mempool_cache_size; i++)
+		small_mempool_check_and_free_spare(&alloc->small_mempool_cache[i]);
 	return mempool_alloc(&small_mempool->pool);
 }
 
