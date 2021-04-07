@@ -107,19 +107,10 @@ static inline void
 free_object(std::vector<std::pair<void *, unsigned>>& v,
 	    benchmark::State &state)
 {
-	unsigned int i = 0;
-	state.PauseTiming();
-	do {
-		i = rand() % v.size();
-	} while (v[i].first == NULL);
-	state.ResumeTiming();
-
+	unsigned int i = i = rand() % v.size();
 	smfree(&alloc, v[i].first, v[i].second);
-	/*
-	 * Erase is too long for vector, so we only mark
-	 * this element as deleted.
-	 */
-	benchmark::DoNotOptimize(v[i].first = NULL);
+	v[i] = v.back();
+	v.pop_back();
 }
 
 /**
@@ -129,10 +120,8 @@ free_object(std::vector<std::pair<void *, unsigned>>& v,
 static inline void
 free_objects(std::vector<std::pair<void *, unsigned>>& v)
 {
-	for (unsigned int i = 0; i < v.size(); i++) {
-		if (v[i].first != NULL)
-			smfree(&alloc, v[i].first, v[i].second);
-	}
+	for (unsigned int i = 0; i < v.size(); i++)
+		smfree(&alloc, v[i].first, v[i].second);
 	v.clear();
 }
 
