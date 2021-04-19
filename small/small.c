@@ -33,6 +33,74 @@
 #include <string.h>
 #include <stdio.h>
 
+enum {
+	POOL_PER_GROUP_MAX = 32,
+};
+
+/**
+ * Calculates last pool in group.
+ * In a group of pools with the same pool size,
+ * there can be no more than 32 pools
+ * @param[in] first - first pool in new group.
+ * @param[in] last - last pool with same slab_size.
+ * @return last small pool in group.
+ */
+static inline struct small_mempool*
+calculate_last_pool_in_group(struct small_mempool *first,
+			     struct small_mempool *last)
+{
+	uint32_t c = 0;
+	struct small_mempool *last_in_group = first;
+	while (last_in_group < last && (c++) < POOL_PER_GROUP_MAX - 1)
+		last_in_group++;
+	return last_in_group;
+}
+
+/**
+ * Creates new small pool group. First assigns all the pools
+ * in the group their indexes, then mark last pool in group as
+ * available for allocation. From now all mempools in group will
+ * allocate memory from it, as long as their waste < waste_max.
+ * @param[in] first -first pool in group.
+ * @param[in] last - last pool in group.
+ */
+static inline void
+small_mempool_create_group(struct small_alloc *alloc,
+			   struct small_mempool *first,
+			   struct small_mempool *last)
+{
+	struct small_mempool_group *group =
+		&alloc->small_mempool_groups[alloc->small_mempool_groups_size];
+	while (first <= last) {
+		first->group = group;
+		first++;
+	}
+	group->non_optimal_alloc = 0;
+	group->non_optimal_alloc_max = last->pool.objcount;
+	group->last_in_group = last;
+	++alloc->small_mempool_groups_size;
+}
+
+/**
+ * Creates one or more groups of pools from pools with the same slab size.
+ * (One group for 32 or less pools).
+ * @param[in] first - First pool with same slab size.
+ * @param[in] last - Last pool with same slab size.
+ */
+static inline void
+small_mempool_create_groups(struct small_alloc *alloc,
+			    struct small_mempool *first,
+			    struct small_mempool *last)
+{
+	struct small_mempool *first_in_group = first;
+	while (first_in_group <= last) {
+		struct small_mempool *last_in_group =
+			calculate_last_pool_in_group(first_in_group, last);
+		small_mempool_create_group(alloc, first_in_group, last_in_group);
+		first_in_group = last_in_group + 1;
+	}
+}
+
 static inline struct small_mempool *
 small_mempool_search(struct small_alloc *alloc, size_t size)
 {
@@ -47,7 +115,11 @@ small_mempool_search(struct small_alloc *alloc, size_t size)
 static inline void
 small_mempool_create(struct small_alloc *alloc)
 {
+	uint32_t slab_order_cur = 0, slab_order_next = 0;
 	size_t objsize = 0;
+	struct small_mempool *cur_order_pool = &alloc->small_mempool_cache[0];
+	alloc->small_mempool_groups_size = 0;
+
 	for (alloc->small_mempool_cache_size = 0;
 	     objsize < alloc->objsize_max &&
 	     alloc->small_mempool_cache_size < SMALL_MEMPOOL_MAX;
@@ -61,7 +133,31 @@ small_mempool_create(struct small_alloc *alloc)
 		struct small_mempool *pool =
 			&alloc->small_mempool_cache[mempool_cache_size];
 		mempool_create(&pool->pool, alloc->cache, objsize);
+		pool->pool.small_mempool = pool;
 		pool->objsize_min = prevsize + 1;
+
+		slab_order_cur = (slab_order_cur == 0 ?
+				  pool->pool.slab_order : slab_order_cur);
+		slab_order_next = pool->pool.slab_order;
+		/*
+		 * In the case when the size of slab changes, create one or
+		 * more mempool groups. The count of groups depends on the
+		 * mempools count with same slab size. There can be no more
+		 * than 32 pools in one group.
+		 */
+		if (slab_order_next != slab_order_cur) {
+			slab_order_cur = slab_order_next;
+			small_mempool_create_groups(alloc, cur_order_pool, pool - 1);
+			cur_order_pool = pool;
+		}
+		/*
+		 * Maximum object size for mempool allocation == alloc->objsize_max.
+		 * If we have reached this size, there will be no more pools - loop
+		 * will be breaked at the next iteration. So wee need to create last
+		 * group of pools.
+		 */
+		if (objsize == alloc->objsize_max)
+			small_mempool_create_groups(alloc, cur_order_pool, pool);
 	}
 	alloc->objsize_max = objsize;
 }
@@ -138,7 +234,20 @@ small_collect_garbage(struct small_alloc *alloc)
 					break;
 				continue;
 			}
-			mempool_free(pool, item);
+
+			/*
+			 * Find mempool from which the memory was actually
+			 * allocated and recalculate waste if nedeed.
+			 */
+			struct mslab *slab = (struct mslab *)
+				slab_from_ptr(item, pool->slab_ptr_mask);
+			if (pool->small_mempool !=
+			    slab->mempool->small_mempool) {
+				assert(slab->mempool ==
+				       &slab->mempool->small_mempool->pool);
+				--pool->small_mempool->group->non_optimal_alloc;
+			}
+			mempool_free_slab(slab->mempool, slab, item);
 		}
 	} else {
 		/* Finish garbage collection and switch to regular mode */
@@ -169,9 +278,13 @@ smalloc(struct small_alloc *alloc, size_t size)
 			return NULL;
 		return slab_data(slab);
 	}
-	struct mempool *pool = &small_mempool->pool;
-	assert(size <= pool->objsize);
-	return mempool_alloc(pool);
+	if (small_mempool->group->non_optimal_alloc <
+	    small_mempool->group->non_optimal_alloc_max) {
+		++small_mempool->group->non_optimal_alloc;
+		small_mempool = small_mempool->group->last_in_group;
+	}
+
+	return mempool_alloc(&small_mempool->pool);
 }
 
 static inline struct mempool *
@@ -196,7 +309,7 @@ mempool_find(struct small_alloc *alloc, size_t size)
 void
 smfree(struct small_alloc *alloc, void *ptr, size_t size)
 {
-	struct mempool *pool = mempool_find(alloc, size);
+	struct small_mempool *pool = small_mempool_search(alloc, size);
 	if (pool == NULL) {
 		/* Large allocation by slab_cache */
 		struct slab *slab = slab_from_data(ptr);
@@ -204,8 +317,20 @@ smfree(struct small_alloc *alloc, void *ptr, size_t size)
 		return;
 	}
 
+	struct mslab *slab = (struct mslab *)
+		slab_from_ptr(ptr, pool->pool.slab_ptr_mask);
+	/*
+	 * In case this ptr was allocated from other small mempool
+	 * reducing waste for current pool (as you remember, waste
+	 * in our case is memory loss due to allocation from large pools).
+	 */
+	if (pool != slab->mempool->small_mempool) {
+		assert(slab->mempool == &slab->mempool->small_mempool->pool);
+		--pool->group->non_optimal_alloc;
+	}
+
 	/* Regular allocation in mempools */
-	mempool_free(pool, ptr);
+	mempool_free_slab(slab->mempool, slab, ptr);
 }
 
 /**

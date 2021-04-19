@@ -64,6 +64,12 @@ enum small_opt {
 	SMALL_DELAYED_FREE_MODE
 };
 
+struct small_mempool_group {
+	uint32_t non_optimal_alloc;
+	uint32_t non_optimal_alloc_max;
+	struct small_mempool *last_in_group;
+};
+
 /**
  * A mempool to store objects sized from objsize_min to pool->objsize.
  * Is a member of small_mempool_cache array which contains all such pools.
@@ -81,6 +87,7 @@ struct small_mempool
 	 * pool.
 	 */
 	size_t objsize_min;
+	struct small_mempool_group *group;
 };
 
 /**
@@ -100,8 +107,12 @@ struct small_alloc {
 	struct slab_cache *cache;
 	/** Array of all small mempools of a given allocator */
 	struct small_mempool small_mempool_cache[SMALL_MEMPOOL_MAX];
+	/** Array of all small mempool groups */
+	struct small_mempool_group small_mempool_groups[SMALL_MEMPOOL_MAX];
 	/* small_mempool_cache array real size */
 	uint32_t small_mempool_cache_size;
+	/* mempool_groups array real size */
+	uint32_t small_mempool_groups_size;
 	/**
 	 * List of mempool which objects to be freed if delayed free mode.
 	 */
