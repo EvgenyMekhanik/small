@@ -180,6 +180,8 @@ small_lb(size_t size)
 		__builtin_clzl((unsigned long) size) - 1;
 }
 
+#define sm_likely(x)       __builtin_expect((x), 1)
+#define sm_unlikely(x)     __builtin_expect((x), 0)
 
 #if defined(__cplusplus)
 } /* extern "C" */

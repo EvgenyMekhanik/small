@@ -102,7 +102,7 @@ mmap_checked(size_t size, size_t align, int flags)
 	 * to map exactly the requested amount.
 	 */
 	void *map = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, -1, 0);
-	if (map == MAP_FAILED)
+	if (sm_unlikely(map == MAP_FAILED))
 		return NULL;
 	if (((intptr_t) map & (align - 1)) == 0)
 		return map;
@@ -115,7 +115,7 @@ mmap_checked(size_t size, size_t align, int flags)
 	 * strategy.
 	 */
 	map = mmap(NULL, size + align, PROT_READ | PROT_WRITE, flags, -1, 0);
-	if (map == MAP_FAILED)
+	if (sm_unlikely(map == MAP_FAILED))
 		return NULL;
 
 	/* Align the mapped address around slab size. */
@@ -240,7 +240,7 @@ slab_map(struct slab_arena *arena)
 		return ptr;
 	}
 
-	if (quota_use(arena->quota, arena->slab_size) < 0)
+	if (sm_unlikely(quota_use(arena->quota, arena->slab_size) < 0))
 		return NULL;
 
 	/** Need to allocate a new slab. */
@@ -254,7 +254,7 @@ slab_map(struct slab_arena *arena)
 
 	ptr = mmap_checked(arena->slab_size, arena->slab_size,
 			   arena->flags);
-	if (!ptr) {
+	if (sm_unlikely(!ptr)) {
 		__sync_sub_and_fetch(&arena->used, arena->slab_size);
 		quota_release(arena->quota, arena->slab_size);
 	}
@@ -268,7 +268,7 @@ slab_map(struct slab_arena *arena)
 void
 slab_unmap(struct slab_arena *arena, void *ptr)
 {
-	if (ptr == NULL)
+	if (sm_unlikely(ptr == NULL))
 		return;
 
 	lf_lifo_push(&arena->cache, ptr);

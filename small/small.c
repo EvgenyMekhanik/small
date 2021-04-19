@@ -36,7 +36,7 @@
 static inline struct small_mempool *
 small_mempool_search(struct small_alloc *alloc, size_t size)
 {
-	if (size > alloc->objsize_max)
+	if (sm_unlikely(size > alloc->objsize_max))
 		return NULL;
 	unsigned cls =
 		small_class_calc_offset_by_size(&alloc->small_class, size);
@@ -162,10 +162,10 @@ smalloc(struct small_alloc *alloc, size_t size)
 	small_collect_garbage(alloc);
 
 	struct small_mempool *small_mempool = small_mempool_search(alloc, size);
-	if (small_mempool == NULL) {
+	if (sm_unlikely(small_mempool == NULL)) {
 		/* Object is too large, fallback to slab_cache */
 		struct slab *slab = slab_get_large(alloc->cache, size);
-		if (slab == NULL)
+		if (sm_unlikely(slab == NULL))
 			return NULL;
 		return slab_data(slab);
 	}
@@ -178,7 +178,7 @@ static inline struct mempool *
 mempool_find(struct small_alloc *alloc, size_t size)
 {
 	struct small_mempool *small_mempool = small_mempool_search(alloc, size);
-	if (small_mempool == NULL)
+	if (sm_unlikely(small_mempool == NULL))
 		return NULL; /* Allocated by slab_cache. */
 	assert(size >= small_mempool->objsize_min);
 	struct mempool *pool = &small_mempool->pool;
@@ -197,7 +197,7 @@ void
 smfree(struct small_alloc *alloc, void *ptr, size_t size)
 {
 	struct mempool *pool = mempool_find(alloc, size);
-	if (pool == NULL) {
+	if (sm_unlikely(pool == NULL)) {
 		/* Large allocation by slab_cache */
 		struct slab *slab = slab_from_data(ptr);
 		slab_put_large(alloc->cache, slab);
@@ -216,9 +216,9 @@ smfree(struct small_alloc *alloc, void *ptr, size_t size)
 void
 smfree_delayed(struct small_alloc *alloc, void *ptr, size_t size)
 {
-	if (alloc->free_mode == SMALL_DELAYED_FREE && ptr) {
+	if (sm_unlikely(alloc->free_mode == SMALL_DELAYED_FREE) && ptr) {
 		struct mempool *pool = mempool_find(alloc, size);
-		if (pool == NULL) {
+		if (sm_unlikely(pool == NULL)) {
 			/* Large-object allocation by slab_cache. */
 			lifo_push(&alloc->delayed_large, ptr);
 			return;
