@@ -38,6 +38,8 @@
 #include <sys/types.h> /* ssize_t */
 #include <pmatomic.h>
 
+#include "compiler.h"
+
 #if defined(__cplusplus)
 extern "C" {
 #endif /* defined(__cplusplus) */
@@ -130,7 +132,7 @@ quota_set(struct quota *quota, size_t new_total)
 static inline ssize_t
 quota_use(struct quota *quota, size_t size)
 {
-	if (size > QUOTA_MAX)
+	if (sm_unlikely(size > QUOTA_MAX))
 		return -1;
 	uint32_t size_in_units = (size + (QUOTA_UNIT_SIZE - 1))
 				  / QUOTA_UNIT_SIZE;
@@ -143,7 +145,7 @@ quota_use(struct quota *quota, size_t size)
 		uint32_t new_used_in_units = used_in_units + size_in_units;
 		assert(new_used_in_units > used_in_units);
 
-		if (new_used_in_units > total_in_units)
+		if (sm_unlikely(new_used_in_units > total_in_units))
 			return -1;
 
 		uint64_t new_value =

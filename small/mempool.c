@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "mempool.h"
+#include "compiler.h"
 #include <stdlib.h>
 #include <string.h>
 #include <valgrind/valgrind.h>
@@ -67,7 +68,7 @@ mslab_alloc(struct mempool *pool, struct mslab *slab)
 {
 	assert(slab->nfree);
 	void *result;
-	if (slab->free_list) {
+	if (sm_unlikely(slab->free_list)) {
 		/* Recycle an object from the garbage pool. */
 		result = slab->free_list;
 		/*
@@ -85,8 +86,8 @@ mslab_alloc(struct mempool *pool, struct mslab *slab)
 	}
 
 	/* If the slab is full, remove it from the rb tree. */
-	if (--slab->nfree == 0) {
-		if (slab == pool->first_hot_slab) {
+	if (sm_unlikely(--slab->nfree == 0)) {
+		if (sm_likely(slab == pool->first_hot_slab)) {
 			pool->first_hot_slab = mslab_tree_next(&pool->hot_slabs,
 							       slab);
 		}
@@ -126,15 +127,15 @@ mslab_free(struct mempool *pool, struct mslab *slab, void *ptr)
 		 * Update first_hot_slab pointer if the newly
 		 * added tree node is the leftmost.
 		 */
-		if (pool->first_hot_slab == NULL ||
-		    mslab_cmp(pool->first_hot_slab, slab) == 1) {
+		if (sm_likely(mslab_cmp(pool->first_hot_slab, slab) == 1) ||
+		    pool->first_hot_slab == NULL) {
 			pool->first_hot_slab = slab;
 		}
 	} else if (slab->nfree == 1) {
 		rlist_add_entry(&pool->cold_slabs, slab, next_in_cold);
 	} else if (slab->nfree == pool->objcount) {
 		/** Free the slab. */
-		if (slab == pool->first_hot_slab) {
+		if (sm_unlikely(slab == pool->first_hot_slab)) {
 			pool->first_hot_slab =
 				mslab_tree_next(&pool->hot_slabs, slab);
 		}
@@ -193,8 +194,8 @@ void *
 mempool_alloc(struct mempool *pool)
 {
 	struct mslab *slab = pool->first_hot_slab;
-	if (slab == NULL) {
-		if (pool->spare) {
+	if (sm_unlikely(slab == NULL)) {
+		if (sm_unlikely(pool->spare)) {
 			slab = pool->spare;
 			pool->spare = NULL;
 

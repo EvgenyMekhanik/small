@@ -35,6 +35,8 @@
  */
 #include <limits.h>
 
+#include "compiler.h"
+
 /**
  * small_alloc uses a collection of mempools of different sizes.
  * If small_alloc stores all mempools in an array then it have to determine
@@ -203,7 +205,7 @@ small_class_calc_size_by_offset(struct small_class *sc, unsigned cls)
 	unsigned linear_part = cls & sc->effective_mask;
 	/* Log2 base part of the size, maybe with leading 1 of the size. */
 	unsigned log2 = cls >> sc->effective_bits;
-	if (log2 != 0) {
+	if (sm_likely(log2 != 0)) {
 		/* Remove leading 1 from log2 part and add to linear part. */
 		log2--;
 		linear_part |= sc->effective_size;

@@ -51,6 +51,7 @@ const uint32_t slab_magic = 0xeec0ffee;
 #define MAP_ANONYMOUS MAP_ANON
 #endif /* !defined(MAP_ANONYMOUS) */
 
+#ifndef NDEBUG
 static inline void
 slab_assert(struct slab_cache *cache, struct slab *slab)
 {
@@ -67,6 +68,9 @@ slab_assert(struct slab_cache *cache, struct slab *slab)
 		assert(addr == (intptr_t) (addr & ~(size - 1)));
 	}
 }
+#else
+#define slab_assert(x, y)
+#endif
 
 /** Mark a slab as free. */
 static inline void
@@ -121,7 +125,7 @@ slab_buddy(struct slab_cache *cache, struct slab *slab)
 {
 	assert(slab->order <= cache->order_max);
 
-	if (slab->order == cache->order_max)
+	if (sm_unlikely(slab->order == cache->order_max))
 		return NULL;
 	/* The buddy address has its respective bit negated. */
 	return (void *)((intptr_t) slab ^ slab_order_size(cache, slab->order));
@@ -223,9 +227,9 @@ slab_get_with_order(struct slab_cache *cache, uint8_t order)
 	struct slab_list *list= &cache->orders[order];
 
 	for ( ; rlist_empty(&list->slabs); list++) {
-		if (list == cache->orders + cache->order_max) {
+		if (sm_unlikely(list == cache->orders + cache->order_max)) {
 			slab = slab_map(cache->arena);
-			if (slab == NULL)
+			if (sm_unlikely(slab == NULL))
 				return NULL;
 			slab_create(slab, cache->order_max,
 				    cache->arena->slab_size);
@@ -263,10 +267,10 @@ struct slab *
 slab_get_large(struct slab_cache *cache, size_t size)
 {
 	size += slab_sizeof();
-	if (quota_use(cache->arena->quota, size) < 0)
+	if (sm_unlikely(quota_use(cache->arena->quota, size) < 0))
 		return NULL;
 	struct slab *slab = (struct slab *) malloc(size);
-	if (slab == NULL) {
+	if (sm_unlikely(slab == NULL)) {
 		quota_release(cache->arena->quota, size);
 		return NULL;
 	}
@@ -309,7 +313,7 @@ struct slab *
 slab_get(struct slab_cache *cache, size_t size)
 {
 	uint8_t order = slab_order(cache, size + slab_sizeof());
-	if (order == cache->order_max + 1)
+	if (sm_unlikely(order == cache->order_max + 1))
 		return slab_get_large(cache, size);
 	return slab_get_with_order(cache, order);
 }
@@ -336,7 +340,7 @@ slab_put_with_order(struct slab_cache *cache, struct slab *slab)
 	 * list. This ensures that sums of cache->orders[i].stats
 	 * match the totals in cache->allocated.stats.
 	 */
-	if (buddy && buddy->order == slab->order && slab_is_free(buddy)) {
+	if (sm_likely(buddy) && buddy->order == slab->order && slab_is_free(buddy)) {
 		cache->orders[slab->order].stats.total -= slab->size;
 		do {
 			slab = slab_merge(cache, slab, buddy);
@@ -346,7 +350,7 @@ slab_put_with_order(struct slab_cache *cache, struct slab *slab)
 		cache->orders[slab->order].stats.total += slab->size;
 	}
 	slab_poison(slab);
-	if (slab->order == cache->order_max &&
+	if (sm_unlikely(slab->order == cache->order_max) &&
 	    !rlist_empty(&cache->orders[slab->order].slabs)) {
 		/*
 		 * Largest slab should be returned to arena, but we do so
@@ -367,7 +371,7 @@ slab_put_with_order(struct slab_cache *cache, struct slab *slab)
 void
 slab_put(struct slab_cache *cache, struct slab *slab)
 {
-	if (slab->order <= cache->order_max)
+	if (sm_likely(slab->order <= cache->order_max))
 		return slab_put_with_order(cache, slab);
 	return slab_put_large(cache, slab);
 }

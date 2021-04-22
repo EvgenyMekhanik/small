@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "small.h"
+#include "compiler.h"
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
@@ -70,7 +71,7 @@ small_mempool_update_group(struct small_mempool *small_mempool, bool available)
 	 * Calculate small_mempool index, and update used pool mask for group
 	 */
 	uint32_t idx = small_mempool - small_mempool->group->first;
-	if (available)
+	if (sm_likely(available))
 		small_mempool->group->used_pool_mask |= (UINT32_C(1) << idx);
 	else
 		small_mempool->group->used_pool_mask &= ~((UINT32_C(1) << idx));
@@ -205,7 +206,7 @@ small_mempool_create_groups(struct small_alloc *alloc,
 static inline struct small_mempool *
 small_mempool_search(struct small_alloc *alloc, size_t size)
 {
-	if (size > alloc->objsize_max)
+	if (sm_unlikely(size > alloc->objsize_max))
 		return NULL;
 	unsigned cls =
 		small_class_calc_offset_by_size(&alloc->small_class, size);
@@ -377,17 +378,17 @@ smalloc(struct small_alloc *alloc, size_t size)
 	small_collect_garbage(alloc);
 
 	struct small_mempool *small_mempool = small_mempool_search(alloc, size);
-	if (small_mempool == NULL) {
+	if (sm_unlikely(small_mempool == NULL)) {
 		/* Object is too large, fallback to slab_cache */
 		struct slab *slab = slab_get_large(alloc->cache, size);
-		if (slab == NULL)
+		if (sm_unlikely(slab == NULL))
 			return NULL;
 		return slab_data(slab);
 	}
 	struct mempool *pool = &small_mempool->used_pool->pool;
 	assert(size <= pool->objsize);
 	void *ptr = mempool_alloc(pool);
-	if (ptr != NULL)
+	if (sm_likely(ptr != NULL))
 		goto success;
 
 	for (unsigned i = 0; i < alloc->small_mempool_cache_size; i++) {
@@ -397,9 +398,11 @@ smalloc(struct small_alloc *alloc, size_t size)
 	}
 
 	ptr = mempool_alloc(pool);
+	if (sm_unlikely(ptr == NULL))
+		return NULL;
 
 success:
-	if (ptr != NULL && small_mempool->used_pool != small_mempool) {
+	if (sm_unlikely(small_mempool->used_pool != small_mempool)) {
 		/*
 		 * Waste for this allocation is the difference between
 		 * the size of objects optimum mempool and used mempool
@@ -413,7 +416,8 @@ success:
 		 * for the mempool group that this mempool belongs to,
 		 * that it can now be used for memory allocation.
 		 */
-		if (small_mempool->waste >= small_mempool->group->waste_max)
+		if (sm_unlikely(small_mempool->waste >=
+				small_mempool->group->waste_max))
 			small_mempool_update_group(small_mempool, true);
 	}
 	return ptr;
@@ -423,7 +427,7 @@ static inline struct mempool *
 mempool_find(struct small_alloc *alloc, size_t size)
 {
 	struct small_mempool *small_mempool = small_mempool_search(alloc, size);
-	if (small_mempool == NULL)
+	if (sm_unlikely(small_mempool == NULL))
 		return NULL; /* Allocated by slab_cache. */
 	assert(size >= small_mempool->objsize_min);
 	struct mempool *pool = &small_mempool->pool;
@@ -442,7 +446,7 @@ void
 smfree(struct small_alloc *alloc, void *ptr, size_t size)
 {
 	struct small_mempool *pool = small_mempool_search(alloc, size);
-	if (pool == NULL) {
+	if (sm_unlikely(pool == NULL)) {
 		/* Large allocation by slab_cache */
 		struct slab *slab = slab_from_data(ptr);
 		slab_put_large(alloc->cache, slab);
@@ -471,7 +475,7 @@ smfree_delayed(struct small_alloc *alloc, void *ptr, size_t size)
 {
 	if (alloc->free_mode == SMALL_DELAYED_FREE && ptr) {
 		struct mempool *pool = mempool_find(alloc, size);
-		if (pool == NULL) {
+		if (sm_unlikely(pool == NULL)) {
 			/* Large-object allocation by slab_cache. */
 			lifo_push(&alloc->delayed_large, ptr);
 			return;
