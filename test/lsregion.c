@@ -1,5 +1,5 @@
-#include <small/lsregion.h>
-#include <small/quota.h>
+#include <lsregion.h>
+#include <quota.h>
 #include <stdio.h>
 #include <string.h>
 #include "unit.h"

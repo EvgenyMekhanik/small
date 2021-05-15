@@ -40,7 +40,7 @@ include_directories(third_party)
 
 set(lib_headers
     "${config_h}"
-    small/features.h
+    small/small_features.h
     small/ibuf.h
     small/lf_lifo.h
     small/lifo.h
@@ -59,7 +59,7 @@ set(lib_headers
     small/static.h)
 
 set(lib_sources
-    small/features.c
+    small/small_features.c
     small/slab_cache.c
     small/region.c
     small/mempool.c

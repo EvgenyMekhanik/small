@@ -28,7 +28,7 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "small/small_class.h"
+#include <small_class.h>
 #include "unit.h"
 #include <math.h>
 
