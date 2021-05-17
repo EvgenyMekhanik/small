@@ -26,51 +26,51 @@ check_symbol_exists(MAP_ANONYMOUS sys/mman.h TARANTOOL_SMALL_HAVE_MAP_ANONYMOUS)
 check_function_exists(madvise TARANTOOL_SMALL_HAVE_MADVISE)
 check_symbol_exists(MADV_DONTDUMP sys/mman.h TARANTOOL_SMALL_HAVE_MADV_DONTDUMP)
 
-set(config_h "${CMAKE_CURRENT_BINARY_DIR}/small/include/small_config.h")
+set(config_h "${CMAKE_CURRENT_BINARY_DIR}/src/include/small_config.h")
 configure_file(
-    "small/small_config.h.cmake"
+    "src/small_config.h.cmake"
     "${config_h}"
     )
 message (STATUS "")
 
-include_directories("${CMAKE_CURRENT_BINARY_DIR}/small/include")
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/src/include")
 
 # Valgrind
 include_directories(third_party)
 
 set(lib_headers
     "${config_h}"
-    small/small_features.h
-    small/ibuf.h
-    small/lf_lifo.h
-    small/lifo.h
-    small/matras.h
-    small/mempool.h
-    small/obuf.h
-    small/quota.h
-    small/rb.h
-    small/region.h
-    small/rlist.h
-    small/slab_arena.h
-    small/slab_cache.h
-    small/small_class.h
-    small/small.h
-    small/lsregion.h
-    small/static.h)
+    src/small_features.h
+    src/ibuf.h
+    src/lf_lifo.h
+    src/lifo.h
+    src/matras.h
+    src/mempool.h
+    src/obuf.h
+    src/quota.h
+    src/rb.h
+    src/region.h
+    src/rlist.h
+    src/slab_arena.h
+    src/slab_cache.h
+    src/small_class.h
+    src/small.h
+    src/lsregion.h
+    src/static.h)
 
 set(lib_sources
-    small/small_features.c
-    small/slab_cache.c
-    small/region.c
-    small/mempool.c
-    small/slab_arena.c
-    small/small_class.c
-    small/small.c
-    small/matras.c
-    small/ibuf.c
-    small/obuf.c
-    small/lsregion.c
-    small/static.c)
+    src/small_features.c
+    src/slab_cache.c
+    src/region.c
+    src/mempool.c
+    src/slab_arena.c
+    src/small_class.c
+    src/small.c
+    src/matras.c
+    src/ibuf.c
+    src/obuf.c
+    src/lsregion.c
+    src/static.c)
 
 add_library(${PROJECT_NAME} STATIC ${lib_sources})
 target_link_libraries(${PROJECT_NAME} m)

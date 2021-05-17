@@ -1,5 +1,5 @@
 #include "unit.h"
-#include "../small/rb.h"
+#include <rb.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>

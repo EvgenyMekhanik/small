@@ -9,7 +9,7 @@
 #include "unit.h"
 
 #define RB_COMPACT 1
-#include "../small/rb.h"
+#include <rb.h>
 
 /*
  * Weighted binary search tree.

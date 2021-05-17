@@ -1,6 +1,6 @@
 #include <iostream>
 #include "unit.h"
-#include "../small/rb.h"
+#include <rb.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>

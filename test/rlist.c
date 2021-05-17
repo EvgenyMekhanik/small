@@ -1,5 +1,5 @@
 #include "unit.h"
-#include "../small/rlist.h"
+#include <rlist.h>
 
 #define ITEMS		7
 
