@@ -61,6 +61,8 @@ struct ibuf
 	char *buf;
 	/** Start of input. */
 	char *rpos;
+	/** End of parsed input. */
+	char *xpos;
 	/** End of useful input */
 	char *wpos;
 	/** End of buffer. */
@@ -100,6 +102,12 @@ ibuf_capacity(struct ibuf *ibuf)
 	return ibuf->end - ibuf->buf;
 }
 
+static inline size_t
+ibuf_unparsed(struct ibuf *ibuf)
+{
+	return ibuf->wpos - ibuf->xpos;
+}
+
 /**
  * Integer value of the position in the buffer - stable
  * in case of realloc.
@@ -115,7 +123,7 @@ ibuf_pos(struct ibuf *ibuf)
 static inline void
 ibuf_reset(struct ibuf *ibuf)
 {
-	ibuf->rpos = ibuf->wpos = ibuf->buf;
+	ibuf->rpos = ibuf->xpos = ibuf->wpos = ibuf->buf;
 }
 
 void *
