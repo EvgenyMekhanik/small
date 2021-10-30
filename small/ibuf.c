@@ -37,7 +37,7 @@ void
 ibuf_create(struct ibuf *ibuf, struct slab_cache *slabc, size_t start_capacity)
 {
 	ibuf->slabc = slabc;
-	ibuf->buf = ibuf->rpos = ibuf->wpos = ibuf->end = NULL;
+	ibuf->buf = ibuf->rpos = ibuf->xpos = ibuf->wpos = ibuf->end = NULL;
 	ibuf->start_capacity = start_capacity;
 	/* Don't allocate the buffer yet. */
 }
@@ -99,7 +99,9 @@ ibuf_reserve_slow(struct ibuf *ibuf, size_t size)
 		ibuf->buf = ptr;
 		ibuf->end = ibuf->buf + slab_capacity(slab);
 	}
+	size_t xsize = ibuf->xpos - ibuf->rpos;
 	ibuf->rpos = ibuf->buf;
+	ibuf->xpos = ibuf->rpos + xsize;
 	ibuf->wpos = ibuf->rpos + used;
 	return ibuf->wpos;
 }
