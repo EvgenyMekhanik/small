@@ -29,6 +29,11 @@ region_basic()
 
 	fail_unless(region_used(&region) == 10000010);
 
+	ptr = region_alloc(&region, UINT32_MAX);
+	fail_unless(ptr);
+
+	fail_unless(region_used(&region) == (size_t)UINT32_MAX + 10000010);
+
 	region_free(&region);
 
 	fail_unless(region_used(&region) == 0);
@@ -65,7 +70,7 @@ region_test_truncate()
 
 int main()
 {
-	quota_init(&quota, UINT_MAX);
+	quota_init(&quota, QUOTA_MAX);
 	slab_arena_create(&arena, &quota, 0,
 			  4000000, MAP_PRIVATE);
 	slab_cache_create(&cache, &arena);
@@ -74,4 +79,5 @@ int main()
 	region_test_truncate();
 
 	slab_cache_destroy(&cache);
+	slab_arena_destroy(&arena);
 }

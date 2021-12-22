@@ -34,12 +34,20 @@ ibuf_basic()
 
 	fail_unless(ibuf_used(&ibuf) == 0);
 
+	ptr = ibuf_alloc(&ibuf, UINT32_MAX);
+	fail_unless(ptr != NULL);
+	fail_unless(ibuf_used(&ibuf) == UINT32_MAX);
+
+	ibuf_reset(&ibuf);
+
+	fail_unless(ibuf_used(&ibuf) == 0);
+
 	footer();
 }
 
 int main()
 {
-	quota_init(&quota, UINT_MAX);
+	quota_init(&quota, QUOTA_MAX);
 	slab_arena_create(&arena, &quota, 0,
 			  4000000, MAP_PRIVATE);
 	slab_cache_create(&cache, &arena);
@@ -47,4 +55,5 @@ int main()
 	ibuf_basic();
 
 	slab_cache_destroy(&cache);
+	slab_arena_destroy(&arena);
 }

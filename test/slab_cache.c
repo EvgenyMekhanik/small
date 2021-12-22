@@ -18,7 +18,7 @@ int main()
 	struct slab_arena arena;
 	struct slab_cache cache;
 
-	quota_init(&quota, UINT_MAX);
+	quota_init(&quota, QUOTA_MAX);
 
 	slab_arena_create(&arena, &quota, 0, 4000000, MAP_PRIVATE);
 	slab_cache_create(&cache, &arena);
@@ -42,6 +42,13 @@ int main()
 		if (runs[i])
 			slab_put(&cache, runs[i]);
 	}
+	slab_cache_check(&cache);
+
+	/* Special test case for large allocation. */
+	struct slab * slab = slab_get(&cache, UINT32_MAX);
+	fail_unless(slab != NULL);
+	slab_cache_check(&cache);
+	slab_put(&cache, slab);
 	slab_cache_check(&cache);
 
 	/*
